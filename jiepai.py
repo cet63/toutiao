@@ -1,9 +1,9 @@
-# coding:utf-8
+# -*- coding: utf-8 -*-
+
 import re
 import json
 import time
 import random
-import sys
 
 from pathlib import Path
 from urllib import parse
@@ -65,25 +65,46 @@ def get_article_urls(req, timeout=10):
         return urls
 
 
-def get_photo_urls(req, timeout=10):
+def get_photo_urls2(req, timeout=10):
     with request.urlopen(req, timeout=timeout) as res:
         # 这里 decode 默认为 utf-8 编码，但返回的内容中含有部分非 utf-8 的内容，会导致解码失败
         # 所以我们使用 ignore 忽略这部分内容
         soup = BeautifulSoup(res.read().decode(errors='ignore'), 'html.parser')
-        article_main = soup.find('div', id='article-main')
+        #print(soup)
+        sc = soup.html.find_all('script')
 
-        if not article_main:
-            print("无法定位到文章主体...")
-            return
+        search_txt = 'BASE_DATA.galleryInfo'
+        for sc1 in sc:
+            txt = sc1.text
+            if search_txt in txt:
+                (_, _, tt) = txt.partition(search_txt)
+                uu = tt[2:]
+                (vv, _, _) = uu.partition(')')
+                (_, _, ww) = vv.partition('JSON.parse(')
+                xx = ww.lstrip().rstrip()
+                yy = xx[1:len(xx)-1]
+                # print(yy)
+                zz = yy.replace('\\', '')
+                # print(zz)
 
-        heading = article_main.h1.string
+                # 记录所有的图片url
+                tmp_file = 'c:/usr/f/jiepai/' + str(dir_index) + '.txt'
+                with open(tmp_file, 'a+') as f:
+                    f.write(zz + '\n')
 
-        if '街拍' not in heading:
-            print("这不是街拍的文章！！！")
-            return
+                jsobj = json.loads(zz)
 
-        img_list = [img.get('src') for img in article_main.find_all('img') if img.get('src')]
-        return heading, img_list
+                heading = ''.join(jsobj['sub_titles'])
+
+                # if '街拍' not in heading:
+                    # print("这不是街拍的文章！！！")
+                    # return
+
+                # print(heading)
+                img_list = [sub_img['url'] for sub_img in jsobj['sub_images'] if sub_img['url']]
+                # print(img_list)
+
+                return heading, img_list
 
 
 def save_photo(photo_url, save_dir, timeout=10):
@@ -104,8 +125,7 @@ def save_photo(photo_url, save_dir, timeout=10):
 if __name__ == '__main__':
     ongoing = True
     offset = 0  # 请求的偏移量，每次累加 20
-    #root_dir = _create_dir('E:\jiepai')  # 保存图片的根目录
-    root_dir = _create_dir('./examples')  # 改为相当路径
+    root_dir = _create_dir('c:/usr/f/jiepai')  # 保存图片的根目录
     request_headers = {
         'Referer': 'http://www.toutiao.com/search/?keyword=%E8%A1%97%E6%8B%8D',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/54.0.2840.99 Safari/537.36'
@@ -124,19 +144,30 @@ if __name__ == '__main__':
         query_url = 'http://www.toutiao.com/search_content/' + '?' + _get_query_string(query_data)
         article_req = request.Request(query_url, headers=request_headers)
         article_urls = get_article_urls(article_req)
+        # print(article_urls)
 
         # 如果不再返回数据，说明全部数据已经请求完毕，跳出循环
         if article_urls is None:
             break
 
+        # 记录所有的图片url
+        imgurl_file = 'c:/usr/f/jiepai/imgurl.txt'
+        with open(imgurl_file, 'a+') as f:
+            f.write('\n'.join(article_urls))
+            f.write('\n')
+
         # 开始向每篇文章发送请求
+        dir_index = 0
         for a_url in article_urls:
+            if not a_url.startswith('http'):
+                print('错误的链接：{url}, continue'.format(url=a_url))
+                continue
             # 请求文章时可能返回两个异常，一个是连接超时 socket_timeout，
             # 另一个是 HTTPError，例如页面不存在
             # 连接超时我们便休息一下，HTTPError 便直接跳过。
             try:
                 photo_req = request.Request(a_url, headers=request_headers)
-                photo_urls = get_photo_urls(photo_req)
+                photo_urls = get_photo_urls2(photo_req)
 
                 # 文章中没有图片？跳到下一篇文章
                 if photo_urls is None:
@@ -146,7 +177,9 @@ if __name__ == '__main__':
 
                 # 这里使用文章的标题作为保存这篇文章全部图片的目录。
                 # 过滤掉了标题中在 windows 下无法作为目录名的特殊字符。
-                dir_name = re.sub(r'[\\/:*?"<>|]', '', article_heading)
+                # dir_name = re.sub(r'[\\/:*?"<>|]', '', article_heading)
+                dir_index = dir_index + 1
+                dir_name = str(dir_index)
                 download_dir = _create_dir(root_dir / dir_name)
 
                 # 开始下载文章中的图片
@@ -163,9 +196,6 @@ if __name__ == '__main__':
                 continue
             except error.HTTPError:
                 continue
-            except KeyboardInterrupt:  # CTRL+C 退出程序
-                print("你已经使用CTRL+C结束了程序。")
-                sys.exit()
 
         # 一次请求处理完毕，将偏移量加 20，继续获取新的 20 篇文章。
         offset += 20
